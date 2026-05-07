@@ -22,6 +22,38 @@ type Question = {
   choices: string | null
 }
 
+function validateAuthInput(email: string, password: string) {
+  if (!email.trim()) return 'メールアドレスを入力してください。'
+  if (!email.includes('@')) return 'メールアドレスの形式を確認してください。'
+  if (!password) return 'パスワードを入力してください。'
+  if (password.length < 6) return 'パスワードは6文字以上で入力してください。'
+  return ''
+}
+
+function toJapaneseAuthError(message: string) {
+  if (message.includes('Invalid login credentials')) {
+    return 'メールアドレスまたはパスワードが違います。'
+  }
+
+  if (message.includes('Email not confirmed')) {
+    return '確認メールのリンクを開いてからログインしてください。'
+  }
+
+  if (message.includes('User already registered')) {
+    return 'このメールアドレスは既に登録されています。ログインしてください。'
+  }
+
+  if (message.includes('Password should be')) {
+    return 'パスワードは6文字以上で入力してください。'
+  }
+
+  if (message.includes('Anonymous sign-ins are disabled')) {
+    return 'メールアドレスとパスワードを入力してください。'
+  }
+
+  return message
+}
+
 export default function Home() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -38,6 +70,8 @@ export default function Home() {
   const [newQuestionLevel, setNewQuestionLevel] = useState('3')
   const [newQuestionStudySet, setNewQuestionStudySet] = useState('')
   const [errorMessage, setErrorMessage] = useState('')
+  const [noticeMessage, setNoticeMessage] = useState('')
+  const [authLoading, setAuthLoading] = useState(false)
 
   async function refreshSession() {
     const { data } = await supabase.auth.getUser()
@@ -46,30 +80,60 @@ export default function Home() {
 
   async function signUp() {
     setErrorMessage('')
+    setNoticeMessage('')
 
-    const { error } = await supabase.auth.signUp({
-      email,
-      password
-    })
+    const validationMessage = validateAuthInput(email, password)
 
-    if (error) {
-      setErrorMessage(error.message)
+    if (validationMessage) {
+      setErrorMessage(validationMessage)
       return
     }
 
-    alert('登録しました。確認メールを確認してください。')
+    setAuthLoading(true)
+
+    const { data, error } = await supabase.auth.signUp({
+      email: email.trim(),
+      password
+    })
+
+    setAuthLoading(false)
+
+    if (error) {
+      setErrorMessage(toJapaneseAuthError(error.message))
+      return
+    }
+
+    if (data.user && !data.session) {
+      setNoticeMessage('登録しました。確認メールが届いている場合は、リンクを開いてからログインしてください。')
+      return
+    }
+
+    setNoticeMessage('登録しました。')
+    refreshSession()
   }
 
   async function signIn() {
     setErrorMessage('')
+    setNoticeMessage('')
+
+    const validationMessage = validateAuthInput(email, password)
+
+    if (validationMessage) {
+      setErrorMessage(validationMessage)
+      return
+    }
+
+    setAuthLoading(true)
 
     const { error } = await supabase.auth.signInWithPassword({
-      email,
+      email: email.trim(),
       password
     })
 
+    setAuthLoading(false)
+
     if (error) {
-      setErrorMessage(error.message)
+      setErrorMessage(toJapaneseAuthError(error.message))
       return
     }
 
@@ -204,6 +268,8 @@ export default function Home() {
                 className="input"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
+                placeholder="you@example.com"
+                inputMode="email"
               />
             </div>
 
@@ -214,6 +280,7 @@ export default function Home() {
                 className="input"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
+                placeholder="6文字以上"
               />
             </div>
 
@@ -223,14 +290,24 @@ export default function Home() {
               </div>
             )}
 
+            {noticeMessage && (
+              <div className="small" style={{ color: '#047857' }}>
+                {noticeMessage}
+              </div>
+            )}
+
             <div className="row">
-              <button className="button" onClick={signIn}>
-                ログイン
+              <button className="button" onClick={signIn} disabled={authLoading}>
+                {authLoading ? '処理中...' : 'ログイン'}
               </button>
 
-              <button className="button secondary" onClick={signUp}>
+              <button className="button secondary" onClick={signUp} disabled={authLoading}>
                 新規登録
               </button>
+            </div>
+
+            <div className="small">
+              まず新規登録してください。確認メールが届く設定の場合は、メール内のリンクを開いてからログインします。
             </div>
           </div>
         </div>
