@@ -3,11 +3,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { supabase } from '@/lib/supabase'
 
-type StudySet = {
-  id: string
-  title: string
-  qualification_name: string | null
-}
+type StudySet = { id: string; title: string; qualification_name: string | null }
 
 type Question = {
   id: string
@@ -36,16 +32,27 @@ function toJapaneseAuthError(message: string) {
   if (message.includes('User already registered')) return 'このメールアドレスは既に登録されています。ログインしてください。'
   if (message.includes('Password should be')) return 'パスワードは6文字以上で入力してください。'
   if (message.includes('Anonymous sign-ins are disabled')) return 'メールアドレスとパスワードを入力してください。'
-  return message
+  if (message.includes('timeout')) return 'ログイン処理がタイムアウトしました。通信環境を確認して、もう一度試してください。'
+  return message || '認証処理に失敗しました。'
 }
 
 function parseChoices(choices: string | null) {
   if (!choices) return []
+  return choices.split('\n').map((choice) => choice.trim()).filter(Boolean)
+}
 
-  return choices
-    .split('\n')
-    .map((choice) => choice.trim())
-    .filter(Boolean)
+async function withTimeout<T>(promise: Promise<T>, milliseconds = 12000): Promise<T> {
+  let timeoutId: ReturnType<typeof setTimeout> | undefined
+
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timeoutId = setTimeout(() => reject(new Error('timeout')), milliseconds)
+  })
+
+  try {
+    return await Promise.race([promise, timeoutPromise])
+  } finally {
+    if (timeoutId) clearTimeout(timeoutId)
+  }
 }
 
 export default function Home() {
@@ -69,8 +76,13 @@ export default function Home() {
   const [authLoading, setAuthLoading] = useState(false)
 
   async function refreshSession() {
-    const { data } = await supabase.auth.getUser()
-    setUserId(data.user?.id || null)
+    try {
+      const { data, error } = await withTimeout(supabase.auth.getUser(), 8000)
+      if (error) throw error
+      setUserId(data.user?.id || null)
+    } catch {
+      setUserId(null)
+    }
   }
 
   async function signUp() {
@@ -84,21 +96,27 @@ export default function Home() {
     }
 
     setAuthLoading(true)
-    const { data, error } = await supabase.auth.signUp({ email: email.trim(), password })
-    setAuthLoading(false)
 
-    if (error) {
-      setErrorMessage(toJapaneseAuthError(error.message))
-      return
+    try {
+      const { data, error } = await withTimeout(
+        supabase.auth.signUp({ email: email.trim(), password }),
+        12000
+      )
+
+      if (error) throw error
+
+      if (data.user && !data.session) {
+        setNoticeMessage('登録しました。確認メールが届いている場合は、リンクを開いてからログインしてください。')
+        return
+      }
+
+      setNoticeMessage('登録しました。')
+      await refreshSession()
+    } catch (error) {
+      setErrorMessage(toJapaneseAuthError(error instanceof Error ? error.message : ''))
+    } finally {
+      setAuthLoading(false)
     }
-
-    if (data.user && !data.session) {
-      setNoticeMessage('登録しました。確認メールが届いている場合は、リンクを開いてからログインしてください。')
-      return
-    }
-
-    setNoticeMessage('登録しました。')
-    refreshSession()
   }
 
   async function signIn() {
@@ -112,15 +130,22 @@ export default function Home() {
     }
 
     setAuthLoading(true)
-    const { error } = await supabase.auth.signInWithPassword({ email: email.trim(), password })
-    setAuthLoading(false)
 
-    if (error) {
-      setErrorMessage(toJapaneseAuthError(error.message))
-      return
+    try {
+      const { error } = await withTimeout(
+        supabase.auth.signInWithPassword({ email: email.trim(), password }),
+        12000
+      )
+
+      if (error) throw error
+
+      setNoticeMessage('ログインしました。')
+      await refreshSession()
+    } catch (error) {
+      setErrorMessage(toJapaneseAuthError(error instanceof Error ? error.message : ''))
+    } finally {
+      setAuthLoading(false)
     }
-
-    refreshSession()
   }
 
   async function signOut() {
@@ -128,15 +153,13 @@ export default function Home() {
     setUserId(null)
     setStudySets([])
     setQuestions([])
+    setNoticeMessage('ログアウトしました。')
   }
 
   async function fetchStudySets() {
     const { data } = await supabase.from('study_sets').select('*').order('created_at', { ascending: false })
     setStudySets(data || [])
-
-    if (!newQuestionStudySet && data && data.length > 0) {
-      setNewQuestionStudySet(data[0].id)
-    }
+    if (!newQuestionStudySet && data && data.length > 0) setNewQuestionStudySet(data[0].id)
   }
 
   async function fetchQuestions() {
@@ -146,7 +169,6 @@ export default function Home() {
 
   async function createStudySet() {
     if (!newSetTitle.trim() || !userId) return
-
     await supabase.from('study_sets').insert({ user_id: userId, title: newSetTitle })
     setNewSetTitle('')
     fetchStudySets()
@@ -204,7 +226,6 @@ export default function Home() {
         (filterLevel === 'low' && level <= 2) ||
         (filterLevel === 'mid' && level <= 3) ||
         (filterLevel === 'high' && level >= 4)
-
       return matchSet && matchLevel
     })
   }, [questions, selectedSetId, filterLevel])
@@ -229,7 +250,8 @@ export default function Home() {
               <button className="button" onClick={signIn} disabled={authLoading}>{authLoading ? '処理中...' : 'ログイン'}</button>
               <button className="button secondary" onClick={signUp} disabled={authLoading}>新規登録</button>
             </div>
-            <div className="small">まず新規登録してください。確認メールが届く設定の場合は、メール内のリンクを開いてからログインします。</div>
+            <button className="button secondary" onClick={() => { setAuthLoading(false); setErrorMessage('処理を中断しました。もう一度試してください。') }} disabled={!authLoading}>処理を中断</button>
+            <div className="small">ログインが止まる場合は、通信環境を確認し、ブラウザの再読み込み後に再試行してください。</div>
           </div>
         </div>
       </main>
@@ -304,21 +326,11 @@ export default function Home() {
                     {choiceLines.length > 0 && <div className="badge">選択問題</div>}
                   </div>
                   <div style={{ marginBottom: 12 }}>{question.question_text.slice(0, 160)}</div>
-
-                  {choiceLines.length > 0 && (
-                    <div className="choices compact">
-                      {choiceLines.map((choice) => <div key={choice} className="choice">{choice}</div>)}
-                    </div>
-                  )}
-
+                  {choiceLines.length > 0 && <div className="choices">{choiceLines.map((choice) => <div key={choice} className="choice">{choice}</div>)}</div>}
                   <div className="row">
                     <button className="button" onClick={() => setSelectedQuestion(question)}>回答を見る</button>
                     <select className="select" value={String(level)} onChange={(e) => updateUnderstandingLevel(question.id, Number(e.target.value))}>
-                      <option value="1">1</option>
-                      <option value="2">2</option>
-                      <option value="3">3</option>
-                      <option value="4">4</option>
-                      <option value="5">5</option>
+                      <option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option><option value="5">5</option>
                     </select>
                     <button className="button danger" onClick={() => deleteQuestion(question.id)}>削除</button>
                   </div>
@@ -333,51 +345,17 @@ export default function Home() {
         <div className="modal-overlay" onClick={() => setSelectedQuestion(null)}>
           <div className="modal" onClick={(e) => e.stopPropagation()}>
             <div className="stack">
-              <div>
-                <div className="small">問題文</div>
-                <div>{selectedQuestion.question_text}</div>
-              </div>
-
-              {parseChoices(selectedQuestion.choices).length > 0 && (
-                <div>
-                  <div className="small">選択肢</div>
-                  <div className="choices">
-                    {parseChoices(selectedQuestion.choices).map((choice) => <div key={choice} className="choice">{choice}</div>)}
-                  </div>
-                </div>
-              )}
-
-              <div>
-                <div className="small">教材の正答</div>
-                <div>{selectedQuestion.textbook_answer || '未設定'}</div>
-              </div>
-              <div>
-                <div className="small">解説</div>
-                <div>{selectedQuestion.explanation || '未設定'}</div>
-              </div>
-              <div>
-                <div className="small">なぜ正しいか</div>
-                <div>{selectedQuestion.why_correct || '未設定'}</div>
-              </div>
-              <div>
-                <div className="small">なぜ間違いか</div>
-                <div>{selectedQuestion.why_wrong || '未設定'}</div>
-              </div>
-              <div>
-                <div className="small">ワンポイントアドバイス</div>
-                <div>{selectedQuestion.one_point_advice || '未設定'}</div>
-              </div>
+              <div><div className="small">問題文</div><div>{selectedQuestion.question_text}</div></div>
+              {parseChoices(selectedQuestion.choices).length > 0 && <div><div className="small">選択肢</div><div className="choices">{parseChoices(selectedQuestion.choices).map((choice) => <div key={choice} className="choice">{choice}</div>)}</div></div>}
+              <div><div className="small">教材の正答</div><div>{selectedQuestion.textbook_answer || '未設定'}</div></div>
+              <div><div className="small">解説</div><div>{selectedQuestion.explanation || '未設定'}</div></div>
+              <div><div className="small">なぜ正しいか</div><div>{selectedQuestion.why_correct || '未設定'}</div></div>
+              <div><div className="small">なぜ間違いか</div><div>{selectedQuestion.why_wrong || '未設定'}</div></div>
+              <div><div className="small">ワンポイントアドバイス</div><div>{selectedQuestion.one_point_advice || '未設定'}</div></div>
               <div>
                 <div className="small">理解度変更</div>
-                <select className="select" value={String(selectedQuestion.understanding_level || 3)} onChange={(e) => {
-                  updateUnderstandingLevel(selectedQuestion.id, Number(e.target.value))
-                  setSelectedQuestion({ ...selectedQuestion, understanding_level: Number(e.target.value) })
-                }}>
-                  <option value="1">1</option>
-                  <option value="2">2</option>
-                  <option value="3">3</option>
-                  <option value="4">4</option>
-                  <option value="5">5</option>
+                <select className="select" value={String(selectedQuestion.understanding_level || 3)} onChange={(e) => { updateUnderstandingLevel(selectedQuestion.id, Number(e.target.value)); setSelectedQuestion({ ...selectedQuestion, understanding_level: Number(e.target.value) }) }}>
+                  <option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option><option value="5">5</option>
                 </select>
               </div>
               <button className="button secondary" onClick={() => setSelectedQuestion(null)}>閉じる</button>
