@@ -1,98 +1,504 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { supabase } from '@/lib/supabase'
 
-type Todo = {
+type StudySet = {
   id: string
   title: string
-  is_complete: boolean
+  qualification_name: string | null
+}
+
+type Question = {
+  id: string
+  study_set_id: string
+  question_text: string
+  textbook_answer: string | null
+  explanation: string | null
+  why_correct: string | null
+  why_wrong: string | null
+  one_point_advice: string | null
+  understanding_level: number | null
+  choices: string | null
 }
 
 export default function Home() {
-  const [todos, setTodos] = useState<Todo[]>([])
-  const [title, setTitle] = useState('')
+  const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
+  const [userId, setUserId] = useState<string | null>(null)
+  const [studySets, setStudySets] = useState<StudySet[]>([])
+  const [questions, setQuestions] = useState<Question[]>([])
+  const [selectedSetId, setSelectedSetId] = useState('all')
+  const [selectedQuestion, setSelectedQuestion] = useState<Question | null>(null)
+  const [filterLevel, setFilterLevel] = useState('all')
+  const [newSetTitle, setNewSetTitle] = useState('')
+  const [newQuestionText, setNewQuestionText] = useState('')
+  const [newQuestionAnswer, setNewQuestionAnswer] = useState('')
+  const [newQuestionExplanation, setNewQuestionExplanation] = useState('')
+  const [newQuestionLevel, setNewQuestionLevel] = useState('3')
+  const [newQuestionStudySet, setNewQuestionStudySet] = useState('')
+  const [errorMessage, setErrorMessage] = useState('')
 
-  async function fetchTodos() {
+  async function refreshSession() {
+    const { data } = await supabase.auth.getUser()
+    setUserId(data.user?.id || null)
+  }
+
+  async function signUp() {
+    setErrorMessage('')
+
+    const { error } = await supabase.auth.signUp({
+      email,
+      password
+    })
+
+    if (error) {
+      setErrorMessage(error.message)
+      return
+    }
+
+    alert('登録しました。確認メールを確認してください。')
+  }
+
+  async function signIn() {
+    setErrorMessage('')
+
+    const { error } = await supabase.auth.signInWithPassword({
+      email,
+      password
+    })
+
+    if (error) {
+      setErrorMessage(error.message)
+      return
+    }
+
+    refreshSession()
+  }
+
+  async function signOut() {
+    await supabase.auth.signOut()
+    setUserId(null)
+    setStudySets([])
+    setQuestions([])
+  }
+
+  async function fetchStudySets() {
     const { data } = await supabase
-      .from('todos')
+      .from('study_sets')
       .select('*')
       .order('created_at', { ascending: false })
 
-    setTodos(data || [])
+    setStudySets(data || [])
+
+    if (!newQuestionStudySet && data && data.length > 0) {
+      setNewQuestionStudySet(data[0].id)
+    }
   }
 
-  async function addTodo() {
-    if (!title.trim()) return
+  async function fetchQuestions() {
+    const { data } = await supabase
+      .from('questions')
+      .select('*')
+      .order('created_at', { ascending: false })
 
-    await supabase.from('todos').insert({
-      title,
-      is_complete: false
+    setQuestions(data || [])
+  }
+
+  async function createStudySet() {
+    if (!newSetTitle.trim() || !userId) return
+
+    await supabase.from('study_sets').insert({
+      user_id: userId,
+      title: newSetTitle
     })
 
-    setTitle('')
-    fetchTodos()
+    setNewSetTitle('')
+    fetchStudySets()
   }
 
-  async function toggleTodo(id: string, current: boolean) {
+  async function createQuestion() {
+    if (!newQuestionText.trim() || !newQuestionStudySet || !userId) {
+      return
+    }
+
+    await supabase.from('questions').insert({
+      user_id: userId,
+      study_set_id: newQuestionStudySet,
+      question_text: newQuestionText,
+      textbook_answer: newQuestionAnswer,
+      explanation: newQuestionExplanation,
+      understanding_level: Number(newQuestionLevel)
+    })
+
+    setNewQuestionText('')
+    setNewQuestionAnswer('')
+    setNewQuestionExplanation('')
+    setNewQuestionLevel('3')
+
+    fetchQuestions()
+  }
+
+  async function updateUnderstandingLevel(questionId: string, level: number) {
     await supabase
-      .from('todos')
-      .update({ is_complete: !current })
-      .eq('id', id)
+      .from('questions')
+      .update({ understanding_level: level })
+      .eq('id', questionId)
 
-    fetchTodos()
+    fetchQuestions()
   }
 
-  async function deleteTodo(id: string) {
-    await supabase.from('todos').delete().eq('id', id)
-    fetchTodos()
+  async function deleteQuestion(questionId: string) {
+    await supabase.from('questions').delete().eq('id', questionId)
+    fetchQuestions()
   }
 
   useEffect(() => {
-    fetchTodos()
+    refreshSession()
+
+    const {
+      data: { subscription }
+    } = supabase.auth.onAuthStateChange(() => {
+      refreshSession()
+    })
+
+    return () => {
+      subscription.unsubscribe()
+    }
   }, [])
 
+  useEffect(() => {
+    if (!userId) return
+
+    fetchStudySets()
+    fetchQuestions()
+  }, [userId])
+
+  const filteredQuestions = useMemo(() => {
+    return questions.filter((question) => {
+      const matchSet =
+        selectedSetId === 'all' || question.study_set_id === selectedSetId
+
+      const level = question.understanding_level || 0
+
+      const matchLevel =
+        filterLevel === 'all' ||
+        (filterLevel === 'low' && level <= 2) ||
+        (filterLevel === 'mid' && level <= 3) ||
+        (filterLevel === 'high' && level >= 4)
+
+      return matchSet && matchLevel
+    })
+  }, [questions, selectedSetId, filterLevel])
+
+  if (!userId) {
+    return (
+      <main className="page">
+        <div className="card" style={{ maxWidth: 420, margin: '80px auto' }}>
+          <div className="title">MyLearnTool</div>
+
+          <div className="stack">
+            <div>
+              <div>メールアドレス</div>
+              <input
+                className="input"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+              />
+            </div>
+
+            <div>
+              <div>パスワード</div>
+              <input
+                type="password"
+                className="input"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+              />
+            </div>
+
+            {errorMessage && (
+              <div className="small" style={{ color: 'red' }}>
+                {errorMessage}
+              </div>
+            )}
+
+            <div className="row">
+              <button className="button" onClick={signIn}>
+                ログイン
+              </button>
+
+              <button className="button secondary" onClick={signUp}>
+                新規登録
+              </button>
+            </div>
+          </div>
+        </div>
+      </main>
+    )
+  }
+
   return (
-    <main className="container">
-      <h1 className="title">MyLearnTool</h1>
+    <main className="page">
+      <div className="header">
+        <div>
+          <div className="title">MyLearnTool</div>
+          <div className="small">
+            学習セット・問題・理解度を管理するMVP
+          </div>
+        </div>
 
-      <div className="row">
-        <input
-          className="input"
-          value={title}
-          onChange={(e) => setTitle(e.target.value)}
-          placeholder="New todo"
-        />
-
-        <button onClick={addTodo} className="button">
-          Add
+        <button className="button secondary" onClick={signOut}>
+          ログアウト
         </button>
       </div>
 
-      <div>
-        {todos.map((todo) => (
-          <div key={todo.id} className="todo">
-            <div className="todo-left">
-              <input
-                type="checkbox"
-                checked={todo.is_complete}
-                onChange={() => toggleTodo(todo.id, todo.is_complete)}
-              />
+      <div className="grid">
+        <div className="stack">
+          <div className="card stack">
+            <div style={{ fontWeight: 'bold' }}>学習セット作成</div>
 
-              <span className={todo.is_complete ? 'completed' : ''}>
-                {todo.title}
-              </span>
-            </div>
+            <input
+              className="input"
+              placeholder="例: 基本情報技術者試験"
+              value={newSetTitle}
+              onChange={(e) => setNewSetTitle(e.target.value)}
+            />
 
-            <button
-              onClick={() => deleteTodo(todo.id)}
-              className="delete"
-            >
-              Delete
+            <button className="button" onClick={createStudySet}>
+              学習セット追加
             </button>
           </div>
-        ))}
+
+          <div className="card stack">
+            <div style={{ fontWeight: 'bold' }}>問題登録</div>
+
+            <select
+              className="select"
+              value={newQuestionStudySet}
+              onChange={(e) => setNewQuestionStudySet(e.target.value)}
+            >
+              {studySets.map((set) => (
+                <option key={set.id} value={set.id}>
+                  {set.title}
+                </option>
+              ))}
+            </select>
+
+            <textarea
+              className="textarea"
+              placeholder="問題文"
+              value={newQuestionText}
+              onChange={(e) => setNewQuestionText(e.target.value)}
+            />
+
+            <input
+              className="input"
+              placeholder="教材の正答"
+              value={newQuestionAnswer}
+              onChange={(e) => setNewQuestionAnswer(e.target.value)}
+            />
+
+            <textarea
+              className="textarea"
+              placeholder="解説"
+              value={newQuestionExplanation}
+              onChange={(e) => setNewQuestionExplanation(e.target.value)}
+            />
+
+            <select
+              className="select"
+              value={newQuestionLevel}
+              onChange={(e) => setNewQuestionLevel(e.target.value)}
+            >
+              <option value="1">1 - まったく理解していない</option>
+              <option value="2">2 - あまり理解していない</option>
+              <option value="3">3 - 普通</option>
+              <option value="4">4 - だいたい理解している</option>
+              <option value="5">5 - 完全に理解している</option>
+            </select>
+
+            <button className="button" onClick={createQuestion}>
+              問題を保存
+            </button>
+          </div>
+        </div>
+
+        <div className="stack">
+          <div className="card stack">
+            <div className="row">
+              <select
+                className="select"
+                value={selectedSetId}
+                onChange={(e) => setSelectedSetId(e.target.value)}
+              >
+                <option value="all">すべての学習セット</option>
+
+                {studySets.map((set) => (
+                  <option key={set.id} value={set.id}>
+                    {set.title}
+                  </option>
+                ))}
+              </select>
+
+              <select
+                className="select"
+                value={filterLevel}
+                onChange={(e) => setFilterLevel(e.target.value)}
+              >
+                <option value="all">全理解度</option>
+                <option value="low">理解度1〜2</option>
+                <option value="mid">理解度1〜3</option>
+                <option value="high">理解度4〜5</option>
+              </select>
+            </div>
+          </div>
+
+          <div className="stack">
+            {filteredQuestions.length === 0 && (
+              <div className="card empty">
+                まだ問題が登録されていません
+              </div>
+            )}
+
+            {filteredQuestions.map((question) => {
+              const level = question.understanding_level || 0
+
+              const levelClass =
+                level <= 2
+                  ? 'level-low'
+                  : level === 3
+                  ? 'level-mid'
+                  : 'level-high'
+
+              return (
+                <div key={question.id} className="question">
+                  <div className="row" style={{ marginBottom: 10 }}>
+                    <div className={`badge ${levelClass}`}>
+                      理解度 {level}
+                    </div>
+                  </div>
+
+                  <div style={{ marginBottom: 12 }}>
+                    {question.question_text.slice(0, 140)}
+                  </div>
+
+                  <div className="row">
+                    <button
+                      className="button"
+                      onClick={() => setSelectedQuestion(question)}
+                    >
+                      回答を見る
+                    </button>
+
+                    <select
+                      className="select"
+                      value={String(level)}
+                      onChange={(e) =>
+                        updateUnderstandingLevel(
+                          question.id,
+                          Number(e.target.value)
+                        )
+                      }
+                    >
+                      <option value="1">1</option>
+                      <option value="2">2</option>
+                      <option value="3">3</option>
+                      <option value="4">4</option>
+                      <option value="5">5</option>
+                    </select>
+
+                    <button
+                      className="button danger"
+                      onClick={() => deleteQuestion(question.id)}
+                    >
+                      削除
+                    </button>
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        </div>
       </div>
+
+      {selectedQuestion && (
+        <div
+          className="modal-overlay"
+          onClick={() => setSelectedQuestion(null)}
+        >
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <div className="stack">
+              <div>
+                <div className="small">問題文</div>
+                <div>{selectedQuestion.question_text}</div>
+              </div>
+
+              <div>
+                <div className="small">教材の正答</div>
+                <div>{selectedQuestion.textbook_answer || '未設定'}</div>
+              </div>
+
+              <div>
+                <div className="small">解説</div>
+                <div>{selectedQuestion.explanation || '未設定'}</div>
+              </div>
+
+              <div>
+                <div className="small">なぜ正しいか</div>
+                <div>{selectedQuestion.why_correct || '未設定'}</div>
+              </div>
+
+              <div>
+                <div className="small">なぜ間違いか</div>
+                <div>{selectedQuestion.why_wrong || '未設定'}</div>
+              </div>
+
+              <div>
+                <div className="small">ワンポイントアドバイス</div>
+                <div>
+                  {selectedQuestion.one_point_advice || '未設定'}
+                </div>
+              </div>
+
+              <div>
+                <div className="small">理解度変更</div>
+
+                <select
+                  className="select"
+                  value={String(
+                    selectedQuestion.understanding_level || 3
+                  )}
+                  onChange={(e) => {
+                    updateUnderstandingLevel(
+                      selectedQuestion.id,
+                      Number(e.target.value)
+                    )
+
+                    setSelectedQuestion({
+                      ...selectedQuestion,
+                      understanding_level: Number(e.target.value)
+                    })
+                  }}
+                >
+                  <option value="1">1</option>
+                  <option value="2">2</option>
+                  <option value="3">3</option>
+                  <option value="4">4</option>
+                  <option value="5">5</option>
+                </select>
+              </div>
+
+              <button
+                className="button secondary"
+                onClick={() => setSelectedQuestion(null)}
+              >
+                閉じる
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </main>
   )
 }
