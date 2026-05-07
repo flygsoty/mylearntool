@@ -1,7 +1,66 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
-
 body {
   font-family: Arial, Helvetica, sans-serif;
+  margin: 0;
+  padding: 0;
+  background: #f5f5f5;
+}
+
+.container {
+  max-width: 640px;
+  margin: 0 auto;
+  padding: 24px;
+}
+
+.title {
+  font-size: 32px;
+  font-weight: bold;
+  margin-bottom: 24px;
+}
+
+.row {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 24px;
+}
+
+.input {
+  flex: 1;
+  padding: 12px;
+  border-radius: 8px;
+  border: 1px solid #ccc;
+}
+
+.button {
+  background: black;
+  color: white;
+  border: none;
+  padding: 12px 16px;
+  border-radius: 8px;
+}
+
+.todo {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: white;
+  border-radius: 8px;
+  padding: 12px;
+  margin-bottom: 12px;
+}
+
+.todo-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.completed {
+  text-decoration: line-through;
+  opacity: 0.5;
+}
+
+.delete {
+  color: red;
+  border: none;
+  background: transparent;
 }
