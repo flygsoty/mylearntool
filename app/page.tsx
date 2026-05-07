@@ -41,6 +41,22 @@ function parseChoices(choices: string | null) {
   return choices.split('\n').map((choice) => choice.trim()).filter(Boolean)
 }
 
+function answerLabel(value: string | null) {
+  const match = value?.trim().match(/^([A-D])(?:\.|:|：|\s)/i)
+  return match?.[1].toUpperCase() || ''
+}
+
+function isCorrectChoice(choice: string, answer: string | null) {
+  const selectedLabel = answerLabel(choice)
+  const correctLabel = answerLabel(answer)
+
+  if (selectedLabel && correctLabel) return selectedLabel === correctLabel
+
+  const normalizedChoice = choice.trim().toLowerCase()
+  const normalizedAnswer = (answer || '').trim().toLowerCase()
+  return Boolean(normalizedAnswer && normalizedChoice.includes(normalizedAnswer))
+}
+
 async function withTimeout<T>(promise: Promise<T>, milliseconds = 12000): Promise<T> {
   let timeoutId: ReturnType<typeof setTimeout> | undefined
 
@@ -64,6 +80,7 @@ export default function Home() {
   const [selectedSetId, setSelectedSetId] = useState('all')
   const [selectedQuestion, setSelectedQuestion] = useState<Question | null>(null)
   const [filterLevel, setFilterLevel] = useState('all')
+  const [selectedAnswers, setSelectedAnswers] = useState<Record<string, string>>({})
   const [newSetTitle, setNewSetTitle] = useState('')
   const [newQuestionText, setNewQuestionText] = useState('')
   const [newQuestionChoices, setNewQuestionChoices] = useState('')
@@ -74,6 +91,10 @@ export default function Home() {
   const [errorMessage, setErrorMessage] = useState('')
   const [noticeMessage, setNoticeMessage] = useState('')
   const [authLoading, setAuthLoading] = useState(false)
+
+  function chooseAnswer(questionId: string, choice: string) {
+    setSelectedAnswers((current) => ({ ...current, [questionId]: choice }))
+  }
 
   async function refreshSession() {
     try {
@@ -98,11 +119,7 @@ export default function Home() {
     setAuthLoading(true)
 
     try {
-      const { data, error } = await withTimeout(
-        supabase.auth.signUp({ email: email.trim(), password }),
-        12000
-      )
-
+      const { data, error } = await withTimeout(supabase.auth.signUp({ email: email.trim(), password }), 12000)
       if (error) throw error
 
       if (data.user && !data.session) {
@@ -132,13 +149,8 @@ export default function Home() {
     setAuthLoading(true)
 
     try {
-      const { error } = await withTimeout(
-        supabase.auth.signInWithPassword({ email: email.trim(), password }),
-        12000
-      )
-
+      const { error } = await withTimeout(supabase.auth.signInWithPassword({ email: email.trim(), password }), 12000)
       if (error) throw error
-
       setNoticeMessage('ログインしました。')
       await refreshSession()
     } catch (error) {
@@ -221,11 +233,7 @@ export default function Home() {
     return questions.filter((question) => {
       const matchSet = selectedSetId === 'all' || question.study_set_id === selectedSetId
       const level = question.understanding_level || 0
-      const matchLevel =
-        filterLevel === 'all' ||
-        (filterLevel === 'low' && level <= 2) ||
-        (filterLevel === 'mid' && level <= 3) ||
-        (filterLevel === 'high' && level >= 4)
+      const matchLevel = filterLevel === 'all' || (filterLevel === 'low' && level <= 2) || (filterLevel === 'mid' && level <= 3) || (filterLevel === 'high' && level >= 4)
       return matchSet && matchLevel
     })
   }, [questions, selectedSetId, filterLevel])
@@ -236,14 +244,8 @@ export default function Home() {
         <div className="card" style={{ maxWidth: 420, margin: '80px auto' }}>
           <div className="title">MyLearnTool</div>
           <div className="stack">
-            <div>
-              <div>メールアドレス</div>
-              <input className="input" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@example.com" inputMode="email" />
-            </div>
-            <div>
-              <div>パスワード</div>
-              <input type="password" className="input" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="6文字以上" />
-            </div>
+            <div><div>メールアドレス</div><input className="input" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@example.com" inputMode="email" /></div>
+            <div><div>パスワード</div><input type="password" className="input" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="6文字以上" /></div>
             {errorMessage && <div className="small" style={{ color: 'red' }}>{errorMessage}</div>}
             {noticeMessage && <div className="small" style={{ color: '#047857' }}>{noticeMessage}</div>}
             <div className="row">
@@ -261,10 +263,7 @@ export default function Home() {
   return (
     <main className="page">
       <div className="header">
-        <div>
-          <div className="title">MyLearnTool</div>
-          <div className="small">学習セット・問題・理解度を管理するMVP</div>
-        </div>
+        <div><div className="title">MyLearnTool</div><div className="small">学習セット・問題・理解度を管理するMVP</div></div>
         <button className="button secondary" onClick={signOut}>ログアウト</button>
       </div>
 
@@ -278,39 +277,23 @@ export default function Home() {
 
           <div className="card stack">
             <div style={{ fontWeight: 'bold' }}>問題登録</div>
-            <select className="select" value={newQuestionStudySet} onChange={(e) => setNewQuestionStudySet(e.target.value)}>
-              {studySets.map((set) => <option key={set.id} value={set.id}>{set.title}</option>)}
-            </select>
+            <select className="select" value={newQuestionStudySet} onChange={(e) => setNewQuestionStudySet(e.target.value)}>{studySets.map((set) => <option key={set.id} value={set.id}>{set.title}</option>)}</select>
             <textarea className="textarea" placeholder="問題文" value={newQuestionText} onChange={(e) => setNewQuestionText(e.target.value)} />
             <textarea className="textarea" placeholder={'選択肢（例）\nA. 選択肢1\nB. 選択肢2\nC. 選択肢3\nD. 選択肢4'} value={newQuestionChoices} onChange={(e) => setNewQuestionChoices(e.target.value)} />
             <input className="input" placeholder="教材の正答（例: B. スポンサー）" value={newQuestionAnswer} onChange={(e) => setNewQuestionAnswer(e.target.value)} />
             <textarea className="textarea" placeholder="解説" value={newQuestionExplanation} onChange={(e) => setNewQuestionExplanation(e.target.value)} />
             <select className="select" value={newQuestionLevel} onChange={(e) => setNewQuestionLevel(e.target.value)}>
-              <option value="1">1 - まったく理解していない</option>
-              <option value="2">2 - あまり理解していない</option>
-              <option value="3">3 - 普通</option>
-              <option value="4">4 - だいたい理解している</option>
-              <option value="5">5 - 完全に理解している</option>
+              <option value="1">1 - まったく理解していない</option><option value="2">2 - あまり理解していない</option><option value="3">3 - 普通</option><option value="4">4 - だいたい理解している</option><option value="5">5 - 完全に理解している</option>
             </select>
             <button className="button" onClick={createQuestion}>問題を保存</button>
           </div>
         </div>
 
         <div className="stack">
-          <div className="card stack">
-            <div className="row">
-              <select className="select" value={selectedSetId} onChange={(e) => setSelectedSetId(e.target.value)}>
-                <option value="all">すべての学習セット</option>
-                {studySets.map((set) => <option key={set.id} value={set.id}>{set.title}</option>)}
-              </select>
-              <select className="select" value={filterLevel} onChange={(e) => setFilterLevel(e.target.value)}>
-                <option value="all">全理解度</option>
-                <option value="low">理解度1〜2</option>
-                <option value="mid">理解度1〜3</option>
-                <option value="high">理解度4〜5</option>
-              </select>
-            </div>
-          </div>
+          <div className="card stack"><div className="row">
+            <select className="select" value={selectedSetId} onChange={(e) => setSelectedSetId(e.target.value)}><option value="all">すべての学習セット</option>{studySets.map((set) => <option key={set.id} value={set.id}>{set.title}</option>)}</select>
+            <select className="select" value={filterLevel} onChange={(e) => setFilterLevel(e.target.value)}><option value="all">全理解度</option><option value="low">理解度1〜2</option><option value="mid">理解度1〜3</option><option value="high">理解度4〜5</option></select>
+          </div></div>
 
           <div className="stack">
             {filteredQuestions.length === 0 && <div className="card empty">まだ問題が登録されていません</div>}
@@ -318,22 +301,22 @@ export default function Home() {
               const level = question.understanding_level || 0
               const levelClass = level <= 2 ? 'level-low' : level === 3 ? 'level-mid' : 'level-high'
               const choiceLines = parseChoices(question.choices)
+              const selectedChoice = selectedAnswers[question.id]
+              const answered = Boolean(selectedChoice)
+              const correct = answered ? isCorrectChoice(selectedChoice, question.textbook_answer) : false
 
               return (
                 <div key={question.id} className="question">
-                  <div className="row" style={{ marginBottom: 10 }}>
-                    <div className={`badge ${levelClass}`}>理解度 {level}</div>
-                    {choiceLines.length > 0 && <div className="badge">選択問題</div>}
-                  </div>
+                  <div className="row" style={{ marginBottom: 10 }}><div className={`badge ${levelClass}`}>理解度 {level}</div>{choiceLines.length > 0 && <div className="badge">選択問題</div>}</div>
                   <div style={{ marginBottom: 12 }}>{question.question_text.slice(0, 160)}</div>
-                  {choiceLines.length > 0 && <div className="choices">{choiceLines.map((choice) => <div key={choice} className="choice">{choice}</div>)}</div>}
-                  <div className="row">
-                    <button className="button" onClick={() => setSelectedQuestion(question)}>回答を見る</button>
-                    <select className="select" value={String(level)} onChange={(e) => updateUnderstandingLevel(question.id, Number(e.target.value))}>
-                      <option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option><option value="5">5</option>
-                    </select>
-                    <button className="button danger" onClick={() => deleteQuestion(question.id)}>削除</button>
-                  </div>
+                  {choiceLines.length > 0 && <div className="choices">{choiceLines.map((choice) => {
+                    const isSelected = selectedChoice === choice
+                    const isCorrect = isCorrectChoice(choice, question.textbook_answer)
+                    const className = `choice-button ${answered && isCorrect ? 'correct' : ''} ${answered && isSelected && !isCorrect ? 'wrong' : ''}`
+                    return <button key={choice} className={className} onClick={() => chooseAnswer(question.id, choice)}>{choice}</button>
+                  })}</div>}
+                  {answered && <div className={correct ? 'result correct-text' : 'result wrong-text'}>{correct ? '正解です' : `不正解です。正答: ${question.textbook_answer || '未設定'}`}</div>}
+                  <div className="row"><button className="button" onClick={() => setSelectedQuestion(question)}>回答を見る</button><select className="select" value={String(level)} onChange={(e) => updateUnderstandingLevel(question.id, Number(e.target.value))}><option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option><option value="5">5</option></select><button className="button danger" onClick={() => deleteQuestion(question.id)}>削除</button></div>
                 </div>
               )
             })}
@@ -342,26 +325,25 @@ export default function Home() {
       </div>
 
       {selectedQuestion && (
-        <div className="modal-overlay" onClick={() => setSelectedQuestion(null)}>
-          <div className="modal" onClick={(e) => e.stopPropagation()}>
-            <div className="stack">
-              <div><div className="small">問題文</div><div>{selectedQuestion.question_text}</div></div>
-              {parseChoices(selectedQuestion.choices).length > 0 && <div><div className="small">選択肢</div><div className="choices">{parseChoices(selectedQuestion.choices).map((choice) => <div key={choice} className="choice">{choice}</div>)}</div></div>}
-              <div><div className="small">教材の正答</div><div>{selectedQuestion.textbook_answer || '未設定'}</div></div>
-              <div><div className="small">解説</div><div>{selectedQuestion.explanation || '未設定'}</div></div>
-              <div><div className="small">なぜ正しいか</div><div>{selectedQuestion.why_correct || '未設定'}</div></div>
-              <div><div className="small">なぜ間違いか</div><div>{selectedQuestion.why_wrong || '未設定'}</div></div>
-              <div><div className="small">ワンポイントアドバイス</div><div>{selectedQuestion.one_point_advice || '未設定'}</div></div>
-              <div>
-                <div className="small">理解度変更</div>
-                <select className="select" value={String(selectedQuestion.understanding_level || 3)} onChange={(e) => { updateUnderstandingLevel(selectedQuestion.id, Number(e.target.value)); setSelectedQuestion({ ...selectedQuestion, understanding_level: Number(e.target.value) }) }}>
-                  <option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option><option value="5">5</option>
-                </select>
-              </div>
-              <button className="button secondary" onClick={() => setSelectedQuestion(null)}>閉じる</button>
-            </div>
-          </div>
-        </div>
+        <div className="modal-overlay" onClick={() => setSelectedQuestion(null)}><div className="modal" onClick={(e) => e.stopPropagation()}><div className="stack">
+          <div><div className="small">問題文</div><div>{selectedQuestion.question_text}</div></div>
+          {parseChoices(selectedQuestion.choices).length > 0 && <div><div className="small">選択肢</div><div className="choices">{parseChoices(selectedQuestion.choices).map((choice) => {
+            const selectedChoice = selectedAnswers[selectedQuestion.id]
+            const answered = Boolean(selectedChoice)
+            const isSelected = selectedChoice === choice
+            const isCorrect = isCorrectChoice(choice, selectedQuestion.textbook_answer)
+            const className = `choice-button ${answered && isCorrect ? 'correct' : ''} ${answered && isSelected && !isCorrect ? 'wrong' : ''}`
+            return <button key={choice} className={className} onClick={() => chooseAnswer(selectedQuestion.id, choice)}>{choice}</button>
+          })}</div></div>}
+          {selectedAnswers[selectedQuestion.id] && <div className={isCorrectChoice(selectedAnswers[selectedQuestion.id], selectedQuestion.textbook_answer) ? 'result correct-text' : 'result wrong-text'}>{isCorrectChoice(selectedAnswers[selectedQuestion.id], selectedQuestion.textbook_answer) ? '正解です' : `不正解です。正答: ${selectedQuestion.textbook_answer || '未設定'}`}</div>}
+          <div><div className="small">教材の正答</div><div>{selectedQuestion.textbook_answer || '未設定'}</div></div>
+          <div><div className="small">解説</div><div>{selectedQuestion.explanation || '未設定'}</div></div>
+          <div><div className="small">なぜ正しいか</div><div>{selectedQuestion.why_correct || '未設定'}</div></div>
+          <div><div className="small">なぜ間違いか</div><div>{selectedQuestion.why_wrong || '未設定'}</div></div>
+          <div><div className="small">ワンポイントアドバイス</div><div>{selectedQuestion.one_point_advice || '未設定'}</div></div>
+          <div><div className="small">理解度変更</div><select className="select" value={String(selectedQuestion.understanding_level || 3)} onChange={(e) => { updateUnderstandingLevel(selectedQuestion.id, Number(e.target.value)); setSelectedQuestion({ ...selectedQuestion, understanding_level: Number(e.target.value) }) }}><option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option><option value="5">5</option></select></div>
+          <button className="button secondary" onClick={() => setSelectedQuestion(null)}>閉じる</button>
+        </div></div></div>
       )}
     </main>
   )
