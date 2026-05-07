@@ -1,13 +1,14 @@
-export const metadata = {
-  title: 'MyLearnTool',
-  description: 'Supabase + Next.js starter'
-}
-
+import type { ReactNode } from 'react'
 import './globals.css'
 
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+export const metadata = {
+  title: 'MyLearnTool',
+  description: 'AI-ready learning app built with Next.js and Supabase'
+}
+
+export default function RootLayout({ children }: { children: ReactNode }) {
   return (
-    <html lang="en">
+    <html lang="ja">
       <body>{children}</body>
     </html>
   )
