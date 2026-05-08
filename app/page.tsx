@@ -48,28 +48,58 @@ function parseChoices(choices: string | null) {
   return choices.split('\n').map((choice) => choice.trim()).filter(Boolean)
 }
 
+function normalizeText(value: string | null) {
+  return (value || '')
+    .toLowerCase()
+    .replace(/[\s　]/g, '')
+    .replace(/[.,、。:：]/g, '')
+}
+
 function choiceLabel(value: string) {
   return value.trim().match(/^([A-H])(?:\.|:|：|\s)/i)?.[1].toUpperCase() || ''
 }
 
+function choiceBody(value: string) {
+  return value.replace(/^([A-H])(?:\.|:|：|\s)\s*/i, '').trim()
+}
+
 function answerLabels(answer: string | null) {
   if (!answer) return []
-  const labels = answer.toUpperCase().match(/[A-H]/g) || []
+  const text = answer.toUpperCase()
+  const explicit = text.match(/(?:^|[^A-Z])([A-H])(?:\s*[,、/]|\s+AND\s+|\s*$|\.)/g)
+  if (!explicit) return []
+  const labels = explicit.map((part) => (part.match(/[A-H]/) || [''])[0]).filter(Boolean)
   return Array.from(new Set(labels)).sort()
+}
+
+function answerContainsChoiceBody(choice: string, answer: string | null) {
+  const answerText = normalizeText(answer)
+  const bodyText = normalizeText(choiceBody(choice))
+  return Boolean(answerText && bodyText && (answerText.includes(bodyText) || bodyText.includes(answerText)))
 }
 
 function isMultiAnswer(answer: string | null) {
   return answerLabels(answer).length > 1
 }
 
-function isAnswerComplete(selected: string[], answer: string | null) {
-  const selectedLabels = selected.map(choiceLabel).filter(Boolean).sort()
-  const correctLabels = answerLabels(answer)
-  return selectedLabels.length === correctLabels.length && selectedLabels.every((label, index) => label === correctLabels[index])
+function isChoiceCorrect(choice: string, answer: string | null) {
+  const labels = answerLabels(answer)
+  const label = choiceLabel(choice)
+
+  if (labels.length > 0 && label) return labels.includes(label)
+  return answerContainsChoiceBody(choice, answer)
 }
 
-function isChoiceCorrect(choice: string, answer: string | null) {
-  return answerLabels(answer).includes(choiceLabel(choice))
+function isAnswerComplete(selected: string[], answer: string | null) {
+  if (selected.length === 0) return false
+
+  const labels = answerLabels(answer)
+  if (labels.length > 0) {
+    const selectedLabels = selected.map(choiceLabel).filter(Boolean).sort()
+    return selectedLabels.length === labels.length && selectedLabels.every((label, index) => label === labels[index])
+  }
+
+  return selected.length === 1 && answerContainsChoiceBody(selected[0], answer)
 }
 
 async function withTimeout<T>(promise: Promise<T>, milliseconds = 12000): Promise<T> {
@@ -105,6 +135,13 @@ export default function Home() {
   const [errorMessage, setErrorMessage] = useState('')
   const [noticeMessage, setNoticeMessage] = useState('')
   const [authLoading, setAuthLoading] = useState(false)
+  const [isEditing, setIsEditing] = useState(false)
+  const [editAnswer, setEditAnswer] = useState('')
+  const [editExplanation, setEditExplanation] = useState('')
+  const [editWhyCorrect, setEditWhyCorrect] = useState('')
+  const [editWhyWrong, setEditWhyWrong] = useState('')
+  const [editOnePoint, setEditOnePoint] = useState('')
+  const [savingEdit, setSavingEdit] = useState(false)
 
   function chooseAnswer(question: Question, choice: string) {
     setSelectedAnswers((current) => {
@@ -121,6 +158,52 @@ export default function Home() {
 
   function clearAnswer(questionId: string) {
     setSelectedAnswers((current) => ({ ...current, [questionId]: [] }))
+  }
+
+  function openQuestion(question: Question) {
+    setSelectedQuestion(question)
+    setIsEditing(false)
+    setEditAnswer(question.textbook_answer || '')
+    setEditExplanation(question.explanation || '')
+    setEditWhyCorrect(question.why_correct || '')
+    setEditWhyWrong(question.why_wrong || '')
+    setEditOnePoint(question.one_point_advice || '')
+  }
+
+  async function saveExplanationEdits() {
+    if (!selectedQuestion) return
+    setSavingEdit(true)
+
+    const { error } = await supabase
+      .from('questions')
+      .update({
+        textbook_answer: editAnswer,
+        explanation: editExplanation,
+        why_correct: editWhyCorrect,
+        why_wrong: editWhyWrong,
+        one_point_advice: editOnePoint
+      })
+      .eq('id', selectedQuestion.id)
+
+    setSavingEdit(false)
+
+    if (error) {
+      alert('保存に失敗しました。')
+      return
+    }
+
+    const updatedQuestion = {
+      ...selectedQuestion,
+      textbook_answer: editAnswer,
+      explanation: editExplanation,
+      why_correct: editWhyCorrect,
+      why_wrong: editWhyWrong,
+      one_point_advice: editOnePoint
+    }
+
+    setSelectedQuestion(updatedQuestion)
+    setQuestions((current) => current.map((question) => question.id === updatedQuestion.id ? updatedQuestion : question))
+    setIsEditing(false)
   }
 
   async function refreshSession() {
@@ -273,7 +356,7 @@ export default function Home() {
         {answered && <div className={correct ? 'result correct-text' : 'result wrong-text'}>{correct ? '正解です' : `不正解です。正答: ${question.textbook_answer || '未設定'}`}</div>}
         <div className="row actions">
           {answered && <button className="button secondary" onClick={() => clearAnswer(question.id)}>回答リセット</button>}
-          <button className="button" onClick={() => setSelectedQuestion(question)}>解説を見る</button>
+          <button className="button" onClick={() => openQuestion(question)}>解説を見る</button>
           <select className="select compact-select" value={String(level)} onChange={(e) => updateUnderstandingLevel(question.id, Number(e.target.value))}>
             <option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option><option value="5">5</option>
           </select>
@@ -320,7 +403,6 @@ export default function Home() {
       </section>
 
       {view === 'solve' && <section className="stack">{filteredQuestions.length === 0 ? <div className="card empty">問題がありません</div> : filteredQuestions.map((q) => renderQuestionCard(q))}</section>}
-
       {view === 'list' && <section className="stack">{filteredQuestions.map((q) => renderQuestionCard(q, true))}</section>}
 
       {view === 'add' && <section className="grid">
@@ -334,7 +416,7 @@ export default function Home() {
           <select className="select" value={newQuestionStudySet} onChange={(e) => setNewQuestionStudySet(e.target.value)}>{studySets.map((set) => <option key={set.id} value={set.id}>{set.title}</option>)}</select>
           <textarea className="textarea" placeholder="問題文" value={newQuestionText} onChange={(e) => setNewQuestionText(e.target.value)} />
           <textarea className="textarea" placeholder={'選択肢\nA. ...\nB. ...\nC. ...\nD. ...'} value={newQuestionChoices} onChange={(e) => setNewQuestionChoices(e.target.value)} />
-          <input className="input" placeholder="正答。複数の場合は A,C のように入力" value={newQuestionAnswer} onChange={(e) => setNewQuestionAnswer(e.target.value)} />
+          <input className="input" placeholder="正答。例: B または スポンサー。複数なら A,C" value={newQuestionAnswer} onChange={(e) => setNewQuestionAnswer(e.target.value)} />
           <textarea className="textarea" placeholder="解説" value={newQuestionExplanation} onChange={(e) => setNewQuestionExplanation(e.target.value)} />
           <select className="select" value={newQuestionLevel} onChange={(e) => setNewQuestionLevel(e.target.value)}><option value="1">1 未理解</option><option value="2">2 不安</option><option value="3">3 普通</option><option value="4">4 理解</option><option value="5">5 習得</option></select>
           <button className="button" onClick={createQuestion}>保存</button>
@@ -348,11 +430,26 @@ export default function Home() {
 
       {selectedQuestion && (
         <div className="modal-overlay" onClick={() => setSelectedQuestion(null)}><div className="modal" onClick={(e) => e.stopPropagation()}><div className="stack">
-          <h2>解説</h2><div>{renderQuestionCard(selectedQuestion)}</div>
-          <div><div className="small">解説</div><div>{selectedQuestion.explanation || '未設定'}</div></div>
-          <div><div className="small">なぜ正しいか</div><div>{selectedQuestion.why_correct || '未設定'}</div></div>
-          <div><div className="small">なぜ間違いか</div><div>{selectedQuestion.why_wrong || '未設定'}</div></div>
-          <div><div className="small">ワンポイント</div><div>{selectedQuestion.one_point_advice || '未設定'}</div></div>
+          <div className="row"><h2>解説</h2><button className="button secondary" onClick={() => setIsEditing(!isEditing)}>{isEditing ? '表示に戻る' : '解説を編集'}</button></div>
+          <div>{renderQuestionCard(selectedQuestion)}</div>
+          {isEditing ? (
+            <div className="stack">
+              <label>正答<input className="input" value={editAnswer} onChange={(e) => setEditAnswer(e.target.value)} /></label>
+              <label>解説<textarea className="textarea" value={editExplanation} onChange={(e) => setEditExplanation(e.target.value)} /></label>
+              <label>なぜ正しいか<textarea className="textarea" value={editWhyCorrect} onChange={(e) => setEditWhyCorrect(e.target.value)} /></label>
+              <label>なぜ間違いか<textarea className="textarea" value={editWhyWrong} onChange={(e) => setEditWhyWrong(e.target.value)} /></label>
+              <label>ワンポイント<textarea className="textarea" value={editOnePoint} onChange={(e) => setEditOnePoint(e.target.value)} /></label>
+              <button className="button" onClick={saveExplanationEdits} disabled={savingEdit}>{savingEdit ? '保存中...' : '保存'}</button>
+            </div>
+          ) : (
+            <>
+              <div><div className="small">教材の正答</div><div>{selectedQuestion.textbook_answer || '未設定'}</div></div>
+              <div><div className="small">解説</div><div>{selectedQuestion.explanation || '未設定'}</div></div>
+              <div><div className="small">なぜ正しいか</div><div>{selectedQuestion.why_correct || '未設定'}</div></div>
+              <div><div className="small">なぜ間違いか</div><div>{selectedQuestion.why_wrong || '未設定'}</div></div>
+              <div><div className="small">ワンポイント</div><div>{selectedQuestion.one_point_advice || '未設定'}</div></div>
+            </>
+          )}
           <button className="button secondary" onClick={() => setSelectedQuestion(null)}>閉じる</button>
         </div></div></div>
       )}
