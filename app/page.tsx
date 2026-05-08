@@ -111,6 +111,7 @@ export default function Home() {
   const [selectedQuestion, setSelectedQuestion] = useState<Question | null>(null)
   const [filterLevel, setFilterLevel] = useState('all')
   const [selectedAnswers, setSelectedAnswers] = useState<Record<string, string[]>>({})
+  const [gradedAnswers, setGradedAnswers] = useState<Record<string, boolean>>({})
   const [newSetTitle, setNewSetTitle] = useState('')
   const [newQuestionText, setNewQuestionText] = useState('')
   const [newQuestionChoices, setNewQuestionChoices] = useState('')
@@ -138,10 +139,20 @@ export default function Home() {
       }
       return { ...current, [question.id]: [choice] }
     })
+
+    setGradedAnswers((current) => ({
+      ...current,
+      [question.id]: !isMultiAnswer(question.textbook_answer)
+    }))
+  }
+
+  function gradeAnswer(questionId: string) {
+    setGradedAnswers((current) => ({ ...current, [questionId]: true }))
   }
 
   function clearAnswer(questionId: string) {
     setSelectedAnswers((current) => ({ ...current, [questionId]: [] }))
+    setGradedAnswers((current) => ({ ...current, [questionId]: false }))
   }
 
   function openQuestion(question: Question) {
@@ -283,28 +294,31 @@ export default function Home() {
   }), [questions, selectedSetId, filterLevel])
 
   const lowCount = questions.filter((q) => (q.understanding_level || 0) <= 2).length
-  const answeredCount = Object.values(selectedAnswers).filter((items) => items.length > 0).length
+  const answeredCount = Object.values(gradedAnswers).filter(Boolean).length
 
   function renderQuestionCard(question: Question, compact = false) {
     const level = question.understanding_level || 0
     const choiceLines = parseChoices(question.choices)
     const selected = selectedAnswers[question.id] || []
-    const answered = selected.length > 0
-    const correct = isAnswerComplete(selected, question.textbook_answer)
+    const multi = isMultiAnswer(question.textbook_answer)
+    const answered = Boolean(gradedAnswers[question.id])
+    const correct = answered && isAnswerComplete(selected, question.textbook_answer)
 
     return (
       <div key={question.id} className="question">
         <div className="row top-row"><span className={`badge ${level <= 2 ? 'level-low' : level === 3 ? 'level-mid' : 'level-high'}`}>理解度 {level} {levelLabels[level] || ''}</span></div>
         <div className="question-text">{compact ? question.question_text.slice(0, 140) : question.question_text}</div>
+        {multi && !answered && <div className="small">複数選択です。該当する選択肢をすべて選んでから「回答する」を押してください。</div>}
         {choiceLines.length > 0 && <div className="choices">{choiceLines.map((choice) => {
           const selectedThis = selected.includes(choice)
           const correctThis = isChoiceCorrect(choice, question.textbook_answer)
           const className = `choice-button ${selectedThis ? 'selected' : ''} ${answered && correctThis ? 'correct' : ''} ${answered && selectedThis && !correctThis ? 'wrong' : ''}`
           return <button key={choice} className={className} onClick={() => chooseAnswer(question, choice)}>{choice}</button>
         })}</div>}
+        {multi && selected.length > 0 && !answered && <button className="button small-button" onClick={() => gradeAnswer(question.id)}>回答する</button>}
         {answered && <div className={correct ? 'result correct-text' : 'result wrong-text'}>{correct ? '正解です' : `不正解です。正答: ${question.textbook_answer || '未設定'}`}</div>}
         <div className="row actions">
-          {answered && <button className="button secondary small-button" onClick={() => clearAnswer(question.id)}>リセット</button>}
+          {selected.length > 0 && <button className="button secondary small-button" onClick={() => clearAnswer(question.id)}>リセット</button>}
           <button className="button small-button" onClick={() => openQuestion(question)}>解説を見る</button>
           <select className="select compact-select" value={String(level)} onChange={(e) => updateUnderstandingLevel(question.id, Number(e.target.value))}><option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option><option value="5">5</option></select>
           {view !== 'solve' && <button className="button danger small-button" onClick={() => deleteQuestion(question.id)}>削除</button>}
